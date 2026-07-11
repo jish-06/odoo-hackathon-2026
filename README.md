@@ -1,4 +1,3 @@
-# odoo-hackathon-2026
 # Odoo Hackathon 2026 - Team: 
 
 Welcome to our team's repository for the Odoo Hackathon 2026 Online Round. 
