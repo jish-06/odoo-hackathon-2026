@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.streamlit/config.toml
+
+# Catch-all for any local SQLite database names
+*.db
+*.sqlite
+*.sqlite3
+*-journal
