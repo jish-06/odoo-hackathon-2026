@@ -9,12 +9,12 @@ from utils import (
     create_department, create_category, promote_user,
     ask_ai, get_user_allocations
 )
- 
+
 # ── DASHBOARD ─────────────────────────────────────
 def show_dashboard():
     st.title("🏠 Dashboard")
     stats = get_dashboard_stats()
- 
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("✅ Available", stats["available"])
@@ -24,15 +24,15 @@ def show_dashboard():
         st.metric("🔧 Maintenance", stats["maintenance"])
     with col4:
         st.metric("⚠️ Overdue", stats["overdue"])
- 
+
     col5, col6 = st.columns(2)
     with col5:
         st.metric("📋 Active Bookings", stats["active_bookings"])
     with col6:
         st.metric("🔔 Pending Requests", stats["pending_maintenance"])
- 
+
     st.divider()
- 
+
     overdue = get_overdue_allocations()
     if overdue:
         st.subheader("⚠️ Overdue Returns")
@@ -40,12 +40,12 @@ def show_dashboard():
         st.dataframe(df[["asset_name", "user_name",
                          "allocated_date", "expected_return_date"]],
                     hide_index=True)
- 
+
 # ── ASSETS ────────────────────────────────────────
 def show_assets():
     st.title("📦 Asset Registry")
     tab1, tab2 = st.tabs(["📋 All Assets", "➕ Register Asset"])
- 
+
     with tab1:
         assets = get_all_assets()
         if assets:
@@ -55,7 +55,7 @@ def show_assets():
                         hide_index=True)
         else:
             st.info("No assets registered yet.")
- 
+
     with tab2:
         categories = get_all_categories()
         if not categories:
@@ -68,7 +68,7 @@ def show_assets():
         location = st.text_input("Location")
         condition = st.selectbox("Condition", ["Good", "Fair", "Poor"])
         is_bookable = st.checkbox("Shared/Bookable Resource")
- 
+
         if st.button("Register Asset", use_container_width=True):
             if not name or not location:
                 st.error("Name and location are required!")
@@ -80,12 +80,12 @@ def show_assets():
                 )
                 st.success(f"Asset registered! Tag: {tag}")
                 st.rerun()
- 
+
 # ── ALLOCATIONS ───────────────────────────────────
 def show_allocations():
     st.title("👥 Asset Allocations")
     tab1, tab2, tab3 = st.tabs(["📋 Active", "➕ Allocate", "↩️ Return"])
- 
+
     with tab1:
         allocs = get_active_allocations()
         if allocs:
@@ -95,23 +95,23 @@ def show_allocations():
                         hide_index=True)
         else:
             st.info("No active allocations.")
- 
+
     with tab2:
         assets = get_all_assets()
         available = [a for a in assets if a["status"] == "Available"]
         users = get_all_users()
- 
+
         if not available:
             st.warning("No available assets!")
             return
- 
+
         asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in available}
         user_options = {u["name"]: u["id"] for u in users}
- 
+
         asset = st.selectbox("Select Asset", list(asset_options.keys()))
         user = st.selectbox("Assign To", list(user_options.keys()))
         return_date = st.date_input("Expected Return Date (optional)")
- 
+
         if st.button("Allocate Asset", use_container_width=True):
             success, msg = allocate_asset(
                 asset_options[asset],
@@ -123,7 +123,7 @@ def show_allocations():
                 st.rerun()
             else:
                 st.error(f"❌ {msg}")
- 
+
     with tab3:
         allocs = get_active_allocations()
         if not allocs:
@@ -135,7 +135,7 @@ def show_allocations():
         }
         selected = st.selectbox("Select Allocation", list(alloc_options.keys()))
         notes = st.text_area("Condition Notes")
- 
+
         if st.button("Return Asset", use_container_width=True):
             success, msg = return_asset(alloc_options[selected], notes)
             if success:
@@ -143,7 +143,7 @@ def show_allocations():
                 st.rerun()
             else:
                 st.error(msg)
- 
+
 # ── MY ASSETS (employee) ──────────────────────────
 def show_my_assets():
     st.title("👤 My Assets")
@@ -155,6 +155,8 @@ def show_my_assets():
                          "expected_return_date"]], hide_index=True)
     else:
         st.info("No assets assigned to you currently.")
+
+# ── MAINTENANCE ────────────────────────────────────
 def show_maintenance():
     st.title("🔧 Maintenance")
     user = st.session_state.user
@@ -221,6 +223,7 @@ def show_maintenance():
                     st.success(msg)
                     st.rerun()
 
+# ── ORGANIZATION (admin) ──────────────────────────
 def show_organization():
     st.title("🏢 Organization Setup")
     tab1, tab2 = st.tabs(["🏬 Departments", "📁 Categories"])
@@ -251,6 +254,7 @@ def show_organization():
                 st.success(f"Category '{cat_name}' created!")
                 st.rerun()
 
+# ── USERS (admin) ──────────────────────────────────
 def show_users():
     st.title("👤 User Management")
     users = get_all_users()
@@ -267,6 +271,7 @@ def show_users():
         st.success("User role updated!")
         st.rerun()
 
+# ── NOTIFICATIONS ──────────────────────────────────
 def show_notifications():
     st.title("🔔 Notifications")
     user = st.session_state.user
@@ -276,4 +281,3 @@ def show_notifications():
             st.info(f"📢 {n['message']} — {n['created_at']}")
     else:
         st.info("No notifications yet.")
- 
