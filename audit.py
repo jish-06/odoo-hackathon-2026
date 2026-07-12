@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from utils import get_all_assets, get_all_departments
-from extra_utils import (
+from utils import (
     create_audit, get_open_audit, get_audit_items,
     set_audit_item_status, close_audit_cycle, log_activity
 )

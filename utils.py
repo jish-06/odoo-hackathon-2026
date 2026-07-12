@@ -329,3 +329,109 @@ def reject_transfer_request(request_id):
             (str(date.today()), request_id)
         )
     return True, "Transfer request rejected."
+# ── AUDIT ─────────────────────────────────────────
+def create_audit(department, start_date, end_date, auditors):
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                department TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                auditors TEXT,
+                status TEXT DEFAULT 'Open'
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_id INTEGER,
+                asset_id INTEGER,
+                asset_tag TEXT,
+                asset_name TEXT,
+                expected_location TEXT,
+                verification_status TEXT DEFAULT 'Pending'
+            )
+        """)
+        conn.execute("""
+            INSERT INTO audit_cycles (department, start_date, end_date, auditors)
+            VALUES (?, ?, ?, ?)
+        """, (department, start_date, end_date, auditors))
+        audit_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        assets = conn.execute("SELECT * FROM assets").fetchall()
+        for a in assets:
+            conn.execute("""
+                INSERT INTO audit_items (audit_id, asset_id, asset_tag, asset_name, expected_location)
+                VALUES (?, ?, ?, ?, ?)
+            """, (audit_id, a["id"], a["asset_tag"], a["name"], a["location"]))
+
+def get_open_audit():
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                department TEXT, start_date TEXT,
+                end_date TEXT, auditors TEXT,
+                status TEXT DEFAULT 'Open'
+            )
+        """)
+        return conn.execute(
+            "SELECT * FROM audit_cycles WHERE status='Open' LIMIT 1"
+        ).fetchone()
+
+def get_audit_items(audit_id):
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audit_id INTEGER, asset_id INTEGER,
+                asset_tag TEXT, asset_name TEXT,
+                expected_location TEXT,
+                verification_status TEXT DEFAULT 'Pending'
+            )
+        """)
+        return conn.execute(
+            "SELECT * FROM audit_items WHERE audit_id=?", (audit_id,)
+        ).fetchall()
+
+def set_audit_item_status(item_id, status):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE audit_items SET verification_status=? WHERE id=?",
+            (status, item_id)
+        )
+
+def close_audit_cycle(audit_id):
+    with get_db() as conn:
+        discrepancies = conn.execute("""
+            SELECT COUNT(*) FROM audit_items
+            WHERE audit_id=? AND verification_status IN ('Missing','Damaged')
+        """, (audit_id,)).fetchone()[0]
+        conn.execute(
+            "UPDATE audit_cycles SET status='Closed' WHERE id=?", (audit_id,)
+        )
+        missing_ids = conn.execute("""
+            SELECT asset_id FROM audit_items
+            WHERE audit_id=? AND verification_status='Missing'
+        """, (audit_id,)).fetchall()
+        for row in missing_ids:
+            conn.execute(
+                "UPDATE assets SET status='Lost' WHERE id=?", (row[0],)
+            )
+    return discrepancies
+
+def log_activity(category, message):
+    with get_db() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS activity_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT,
+                message TEXT,
+                created_at TEXT
+            )
+        """)
+        from datetime import date
+        conn.execute(
+            "INSERT INTO activity_logs (category, message, created_at) VALUES (?, ?, ?)",
+            (category, message, str(date.today()))
+        )
