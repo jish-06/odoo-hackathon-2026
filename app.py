@@ -1,23 +1,51 @@
 import streamlit as st
 from auth import login
-from frontend import show_dashboard, show_assets, show_allocations, show_my_assets
-from maintanance import show_maintenance
-from admin_pages import show_organization, show_users, show_notifications
+from frontend import (
+    show_dashboard, show_assets, show_allocations, show_my_assets,
+    show_maintenance, show_organization, show_users, show_notifications
+)
 
 st.set_page_config(page_title="AssetFlow", page_icon="⚡", layout="wide")
 
 
 def show_login():
+    st.markdown("""
+        <style>
+        div[data-testid="stTextInput"] input {
+            border-radius: 20px;
+            padding: 10px 16px;
+        }
+        .af-avatar {
+            width: 56px; height: 56px; border-radius: 50%;
+            background: #EEF2FF; color: #4F46E5;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 600; font-size: 1.1rem;
+            margin: 0 auto 1rem auto;
+        }
+        .af-divider {
+            border-top: 1px solid #333; margin: 1.5rem 0 1rem 0;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("""
-            <div style='text-align:center; padding: 2rem 0;'>
-                <h1 style='color:#4F46E5;'>⚡ AssetFlow</h1>
-                <p style='color:#64748B;'>Enterprise Asset & Resource Management</p>
+            <div style='text-align:center; padding: 1.5rem 0 0.5rem 0;'>
+                <h2 style='color:#4F46E5; margin-bottom:0;'>⚡ AssetFlow – login</h2>
+                <div class='af-avatar'>AF</div>
             </div>
         """, unsafe_allow_html=True)
-        email = st.text_input("📧 Email", key="login_email")
-        password = st.text_input("🔒 Password", type="password", key="login_password")
+
+        email = st.text_input("Email", placeholder="name@company.com", key="login_email")
+        password = st.text_input("Password", type="password", key="login_password")
+
+        st.markdown(
+            "<div style='text-align:right; font-size:0.85rem;'>"
+            "<a href='#'>Forgot password</a></div>",
+            unsafe_allow_html=True
+        )
+
         if st.button("Sign In →", use_container_width=True):
             if not email or not password:
                 st.error("Please fill in both fields!")
@@ -29,6 +57,13 @@ def show_login():
                     st.rerun()
                 else:
                     st.error("❌ Invalid email or password!")
+
+        st.markdown("<div class='af-divider'></div>", unsafe_allow_html=True)
+        st.markdown("**New here?**")
+        st.caption("Sign up creates an employee account. Admin roles are assigned later.")
+
+        if st.button("Create Account", use_container_width=True):
+            st.info("Signup flow not wired up yet — hook this to your auth.signup() function.")
 
 
 def show_sidebar():
