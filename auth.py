@@ -31,3 +31,14 @@ def login(email, password):
     if user and verify_password(password, user["password"]):
         return dict(user)
     return None
+def get_user_by_email(email):
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE email=?", (email,)
+        ).fetchone()
+
+def signup(name, email, password):
+    if get_user_by_email(email):
+        return False, "An account with this email already exists."
+    create_user(name, email, password, role="employee")
+    return True, "Account created! You can now sign in."

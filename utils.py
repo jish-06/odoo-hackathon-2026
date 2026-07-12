@@ -229,3 +229,22 @@ def get_user_allocations(user_id):
             JOIN assets a ON al.asset_id = a.id
             WHERE al.user_id=? AND al.status='Active'
         """, (user_id,)).fetchall()
+def edit_user(user_id, name=None, email=None, department_id=None):
+    with get_db() as conn:
+        if name:
+            conn.execute("UPDATE users SET name=? WHERE id=?", (name, user_id))
+        if email:
+            conn.execute("UPDATE users SET email=? WHERE id=?", (email, user_id))
+        if department_id:
+            conn.execute("UPDATE users SET department_id=? WHERE id=?", (department_id, user_id))
+    return True
+
+def deactivate_user(user_id):
+    with get_db() as conn:
+        conn.execute("UPDATE users SET status='inactive' WHERE id=?", (user_id,))
+    return True
+
+def reactivate_user(user_id):
+    with get_db() as conn:
+        conn.execute("UPDATE users SET status='active' WHERE id=?", (user_id,))
+    return True

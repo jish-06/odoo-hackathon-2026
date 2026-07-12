@@ -8,6 +8,36 @@ from frontend import (
 st.set_page_config(page_title="AssetFlow", page_icon="⚡", layout="wide")
 
 
+def show_signup():
+    from auth import signup
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("<h2 style='text-align:center; color:#4F46E5;'>Create your account</h2>",
+                    unsafe_allow_html=True)
+        name = st.text_input("Full name")
+        email = st.text_input("Email", placeholder="name@company.com")
+        password = st.text_input("Password", type="password")
+        confirm = st.text_input("Confirm password", type="password")
+
+        if st.button("Create Account", use_container_width=True):
+            if not name or not email or not password:
+                st.error("All fields are required!")
+            elif password != confirm:
+                st.error("Passwords don't match!")
+            else:
+                ok, msg = signup(name, email, password)
+                if ok:
+                    st.success(msg)
+                    st.session_state.show_signup = False
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+        if st.button("← Back to login", use_container_width=True):
+            st.session_state.show_signup = False
+            st.rerun()
+
+
 def show_login():
     st.markdown("""
         <style>
@@ -63,7 +93,8 @@ def show_login():
         st.caption("Sign up creates an employee account. Admin roles are assigned later.")
 
         if st.button("Create Account", use_container_width=True):
-            st.info("Signup flow not wired up yet — hook this to your auth.signup() function.")
+            st.session_state.show_signup = True
+            st.rerun()
 
 
 def show_sidebar():
@@ -124,6 +155,9 @@ def show_app():
 
 
 if "logged_in" not in st.session_state:
-    show_login()
+    if st.session_state.get("show_signup"):
+        show_signup()
+    else:
+        show_login()
 else:
     show_app()
