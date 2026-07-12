@@ -9,10 +9,13 @@ from utils import (
     register_asset, allocate_asset, return_asset,
     raise_maintenance, approve_maintenance, resolve_maintenance,
     create_department, create_category, promote_user,
-    ask_ai, get_user_allocations
+    ask_ai, get_user_allocations, get_active_allocation_for_asset,
+    raise_transfer_request, get_all_transfer_requests,
+    get_pending_transfer_requests, approve_transfer_request, reject_transfer_request
 )
  
  
+# ── DASHBOARD ─────────────────────────────────────
 def show_dashboard():
     st.title("🏠 Dashboard")
     stats = get_dashboard_stats()
@@ -44,6 +47,7 @@ def show_dashboard():
                     hide_index=True)
  
  
+# ── ASSETS ────────────────────────────────────────
 def show_assets():
     st.title("📦 Asset Registry")
     tab1, tab2 = st.tabs(["📋 All Assets", "➕ Register Asset"])
@@ -84,134 +88,130 @@ def show_assets():
                 st.rerun()
  
  
-# ---------------------------------------------------------------------------
-# SCREEN 5 — Asset Allocation & Transfer
-# ---------------------------------------------------------------------------
- 
+# ── ALLOCATIONS ───────────────────────────────────
 def show_allocations():
-    st.title("👥 Asset Allocation & Transfer")
+    st.title("👥 Asset Allocations")
+    user = st.session_state.user
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Active", "➕ Allocate", "↩️ Return", "🔁 Transfers"])
  
-    assets = get_all_assets()
-    if not assets:
-        st.info("No assets registered yet.")
-        return
- 
-    asset_options = {f"{a['asset_tag']} - {a['name']}": a for a in assets}
-    selected_label = st.selectbox("Asset", list(asset_options.keys()))
-    asset = asset_options[selected_label]
- 
-    active_allocs = get_active_allocations()
-    current_alloc = next((al for al in active_allocs if al["asset_id"] == asset["id"]), None)
- 
-    if current_alloc:
-        st.markdown(f"""
-            <div style='background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;
-                        padding:0.85rem 1.1rem;margin:0.75rem 0;'>
-                <b>Already allocated to {current_alloc['user_name']}</b><br>
-                <span style='color:#B91C1C;'>Direct re-allocation is blocked — submit a transfer request below.</span>
-            </div>
-        """, unsafe_allow_html=True)
- 
-        st.subheader("Transfer Request")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.text_input("From", value=current_alloc["user_name"], disabled=True)
-        with col2:
-            users = get_all_users()
-            other_users = {u["name"]: u for u in users if u["id"] != current_alloc["user_id"]}
-            to_name = st.selectbox("To", ["Select Employee..."] + list(other_users.keys()))
- 
-        reason = st.text_area("Reason", height=120, placeholder="Why does this asset need to move?")
- 
-        if st.button("Submit Request", type="primary"):
-            if to_name == "Select Employee...":
-                st.error("Please select who the asset should transfer to.")
-            elif not reason.strip():
-                st.error("Please provide a reason for the transfer.")
-            else:
-                _submit_transfer_request(asset["id"], current_alloc["user_id"],
-                                          other_users[to_name]["id"], reason)
-                st.success("Transfer request submitted — pending approval.")
-                st.rerun()
- 
-        _show_pending_transfers(asset["id"])
- 
-        with st.expander("↩️ Return this asset instead"):
-            notes = st.text_area("Condition notes", key="return_notes")
-            if st.button("Return Asset", key="return_btn"):
-                success, msg = return_asset(current_alloc["id"], notes)
-                (st.success if success else st.error)(msg)
-                if success:
-                    st.rerun()
- 
-    else:
-        st.success("This asset is currently available.")
-        users = get_all_users()
-        if users:
-            user_map = {u["name"]: u for u in users}
-            to_name = st.selectbox("Allocate to", list(user_map.keys()))
-            expected_return = st.date_input("Expected return date (optional)", value=None)
- 
-            if st.button("Allocate Asset", type="primary"):
-                ok, msg = allocate_asset(
-                    asset["id"],
-                    user_map[to_name]["id"],
-                    str(expected_return) if expected_return else None,
-                )
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    st.rerun()
- 
-    st.divider()
-    st.subheader("Allocation History")
-    with get_db() as conn:
-        history = conn.execute("""
-            SELECT al.*, u.name as user_name
-            FROM allocations al
-            JOIN users u ON al.user_id = u.id
-            WHERE al.asset_id = ?
-            ORDER BY al.id DESC
-        """, (asset["id"],)).fetchall()
- 
-    if not history:
-        st.caption("No history for this asset yet.")
-    for h in history:
-        if h["status"] == "Returned":
-            line = f"**{h['actual_return_date']}** — Returned by {h['user_name']}"
-            if h["notes"]:
-                line += f", condition: {h['notes']}"
+    with tab1:
+        allocs = get_active_allocations()
+        if allocs:
+            df = pd.DataFrame([dict(a) for a in allocs])
+            st.dataframe(df[["asset_tag", "asset_name", "user_name",
+                             "allocated_date", "expected_return_date"]],
+                        hide_index=True)
         else:
-            line = f"**{h['allocated_date']}** — Allocated to {h['user_name']}"
-        st.markdown(f"- {line}")
+            st.info("No active allocations.")
+ 
+    with tab2:
+        assets = get_all_assets()
+        users = get_all_users()
+        if not assets:
+            st.warning("No assets registered!")
+            return
+ 
+        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in assets}
+        user_options = {u["name"]: u["id"] for u in users}
+ 
+        asset_label = st.selectbox("Select Asset", list(asset_options.keys()))
+        asset_id = asset_options[asset_label]
+        target_user = st.selectbox("Assign To", list(user_options.keys()))
+        return_date = st.date_input("Expected Return Date (optional)")
+ 
+        existing = get_active_allocation_for_asset(asset_id)
+ 
+        if existing:
+            st.markdown(f"""
+                <div style='background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;
+                            padding:0.85rem 1.1rem;margin:0.5rem 0;'>
+                    <b>Already allocated to {existing['holder_name']}</b><br>
+                    <span style='color:#B91C1C;'>Direct re-allocation is blocked — submit a transfer request below.</span>
+                </div>
+            """, unsafe_allow_html=True)
+            notes = st.text_area("Reason for transfer", key="transfer_notes")
+            if st.button("🔁 Request Transfer", use_container_width=True):
+                if not notes.strip():
+                    st.error("Please provide a reason for the transfer.")
+                else:
+                    success, msg = raise_transfer_request(
+                        asset_id, user_options[target_user], user["id"], notes
+                    )
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        else:
+            if st.button("Allocate Asset", use_container_width=True):
+                success, msg = allocate_asset(
+                    asset_id,
+                    user_options[target_user],
+                    str(return_date) if return_date else None
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(f"❌ {msg}")
+ 
+    with tab3:
+        allocs = get_active_allocations()
+        if not allocs:
+            st.info("No active allocations to return.")
+            return
+        alloc_options = {
+            f"{a['asset_tag']} - {a['asset_name']} ({a['user_name']})": a["id"]
+            for a in allocs
+        }
+        selected = st.selectbox("Select Allocation", list(alloc_options.keys()))
+        notes = st.text_area("Condition Notes")
+ 
+        if st.button("Return Asset", use_container_width=True):
+            success, msg = return_asset(alloc_options[selected], notes)
+            if success:
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+ 
+    with tab4:
+        st.subheader("All Transfer Requests")
+        requests = get_all_transfer_requests()
+        if requests:
+            df = pd.DataFrame([dict(r) for r in requests])
+            st.dataframe(df[["asset_tag", "asset_name", "from_user_name",
+                             "to_user_name", "status", "requested_date"]],
+                        hide_index=True)
+        else:
+            st.info("No transfer requests yet.")
+ 
+        if user["role"] in ["admin", "asset_manager", "dept_head"]:
+            pending = get_pending_transfer_requests()
+            if pending:
+                st.divider()
+                st.subheader("Pending Approvals")
+                req_options = {
+                    f"{r['asset_name']} - {r['from_user_name']} → {r['to_user_name']}": r["id"]
+                    for r in pending
+                }
+                selected_req = st.selectbox("Select Request", list(req_options.keys()))
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Approve", use_container_width=True):
+                        success, msg = approve_transfer_request(req_options[selected_req])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                with col2:
+                    if st.button("❌ Reject", use_container_width=True):
+                        success, msg = reject_transfer_request(req_options[selected_req])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
  
  
-# --- Transfer request storage -----------------------------------------------
-# TODO(backend): replace this session_state shim with a real `transfer_requests`
-# table + submit_transfer_request()/approve_transfer_request() functions in
-# utils.py, e.g.:
-#   CREATE TABLE transfer_requests (
-#     id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER, from_user_id INTEGER,
-#     to_user_id INTEGER, reason TEXT, status TEXT DEFAULT 'Pending', created_at TEXT
-#   )
- 
-def _submit_transfer_request(asset_id, from_user_id, to_user_id, reason):
-    if "transfer_requests" not in st.session_state:
-        st.session_state.transfer_requests = []
-    st.session_state.transfer_requests.append({
-        "asset_id": asset_id, "from_user_id": from_user_id,
-        "to_user_id": to_user_id, "reason": reason,
-        "created_at": str(date.today()),
-    })
- 
- 
-def _show_pending_transfers(asset_id):
-    reqs = [r for r in st.session_state.get("transfer_requests", []) if r["asset_id"] == asset_id]
-    if reqs:
-        st.caption("Pending transfer requests for this asset")
-        for r in reqs:
-            st.markdown(f"- {r['created_at']}: {r['reason']}")
- 
- 
+# ── MY ASSETS (employee) ──────────────────────────
 def show_my_assets():
     st.title("👤 My Assets")
     user = st.session_state.user
@@ -224,10 +224,7 @@ def show_my_assets():
         st.info("No assets assigned to you currently.")
  
  
-# ---------------------------------------------------------------------------
-# SCREEN 6 — Resource Booking
-# ---------------------------------------------------------------------------
- 
+# ── RESOURCE BOOKING ──────────────────────────────
 SLOT_HOURS = ["4:00", "5:00", "6:00", "7:00", "8:00", "9:00", "10:00", "11:00", "12:00", "1:00"]
  
 def show_resource_booking():
@@ -289,13 +286,8 @@ def show_resource_booking():
             st.rerun()
  
  
-# --- Booking storage ---------------------------------------------------------
 # TODO(backend): replace this session_state shim with a real `bookings` table +
-# create_booking()/get_bookings_for_resource() functions in utils.py, e.g.:
-#   CREATE TABLE bookings (
-#     id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER, booking_date TEXT,
-#     start_time TEXT, end_time TEXT, team TEXT, user_id INTEGER
-#   )
+# create_booking()/get_bookings_for_resource() functions in utils.py.
  
 def _get_bookings(resource_id, booking_date):
     key = f"{resource_id}:{booking_date}"
@@ -311,14 +303,10 @@ def _add_booking(resource_id, booking_date, start, end, team):
     )
  
  
-# ---------------------------------------------------------------------------
-# SCREEN 7 — Maintenance Management (Kanban)
-# ---------------------------------------------------------------------------
+# ── MAINTENANCE (Kanban) ──────────────────────────
 # Backend only tracks Pending / Approved / Resolved. "Technician assigned" and
 # "In progress" are UI-only sub-stages layered on top via session_state until
 # backend adds a `technician` column and richer status values.
-# TODO(backend): ALTER TABLE maintenance_requests ADD COLUMN technician TEXT;
-#                and support status values 'Technician Assigned', 'In Progress'.
  
 KANBAN_COLUMNS = ["Pending", "Approved", "Technician Assigned", "In Progress", "Resolved"]
  
@@ -413,6 +401,7 @@ def _render_maintenance_card(req, local, role):
             st.rerun()
  
  
+# ── ORGANIZATION (admin) ──────────────────────────
 def show_organization():
     st.title("🏢 Organization Setup")
     tab1, tab2 = st.tabs(["🏬 Departments", "📁 Categories"])
@@ -444,6 +433,7 @@ def show_organization():
                 st.rerun()
  
  
+# ── USERS (admin) ──────────────────────────────────
 def show_users():
     st.title("👤 User Management")
     users = get_all_users()
@@ -461,6 +451,7 @@ def show_users():
         st.rerun()
  
  
+# ── NOTIFICATIONS ──────────────────────────────────
 def show_notifications():
     st.title("🔔 Notifications")
     user = st.session_state.user
@@ -470,3 +461,4 @@ def show_notifications():
             st.info(f"📢 {n['message']} — {n['created_at']}")
     else:
         st.info("No notifications yet.")
+ 

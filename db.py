@@ -79,3 +79,16 @@ def init_db():
                 created_at TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS transfer_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                from_user_id INTEGER NOT NULL,
+                to_user_id INTEGER NOT NULL,
+                requested_by INTEGER NOT NULL,
+                status TEXT DEFAULT 'Requested',
+                requested_date TEXT NOT NULL,
+                approved_date TEXT,
+                notes TEXT
+            )
+        """)
