@@ -1,13 +1,8 @@
 import streamlit as st
 from auth import login
-from views.dashboard import show_dashboard
-from views.assets import show_assets
-from views.allocations import show_allocations
-from views.maintenance import show_maintenance
-from views.organization import show_organization
-from views.users import show_users
-from views.my_assets import show_my_assets
-from views.notifications import show_notifications
+from frontend import show_dashboard, show_assets, show_allocations, show_my_assets
+from maintanance import show_maintenance
+from admin_pages import show_organization, show_users, show_notifications
 
 st.set_page_config(page_title="AssetFlow", page_icon="⚡", layout="wide")
 
