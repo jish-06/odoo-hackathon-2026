@@ -248,3 +248,84 @@ def reactivate_user(user_id):
     with get_db() as conn:
         conn.execute("UPDATE users SET status='active' WHERE id=?", (user_id,))
     return True
+def get_active_allocation_for_asset(asset_id):
+    with get_db() as conn:
+        return conn.execute("""
+            SELECT al.*, u.name as holder_name
+            FROM allocations al
+            JOIN users u ON al.user_id = u.id
+            WHERE al.asset_id=? AND al.status='Active'
+        """, (asset_id,)).fetchone()
+
+def raise_transfer_request(asset_id, to_user_id, requested_by, notes=""):
+    existing = get_active_allocation_for_asset(asset_id)
+    if not existing:
+        return False, "Asset isn't currently allocated — use direct allocation instead."
+    if existing["user_id"] == to_user_id:
+        return False, "Asset is already held by this user."
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO transfer_requests
+                (asset_id, from_user_id, to_user_id, requested_by, status, requested_date, notes)
+            VALUES (?, ?, ?, ?, 'Requested', ?, ?)
+        """, (asset_id, existing["user_id"], to_user_id, requested_by, str(date.today()), notes))
+    return True, "Transfer request submitted!"
+
+def get_all_transfer_requests():
+    with get_db() as conn:
+        return conn.execute("""
+            SELECT tr.*, a.name as asset_name, a.asset_tag,
+                   uf.name as from_user_name, ut.name as to_user_name
+            FROM transfer_requests tr
+            JOIN assets a ON tr.asset_id = a.id
+            JOIN users uf ON tr.from_user_id = uf.id
+            JOIN users ut ON tr.to_user_id = ut.id
+            ORDER BY tr.id DESC
+        """).fetchall()
+
+def get_pending_transfer_requests():
+    with get_db() as conn:
+        return conn.execute("""
+            SELECT tr.*, a.name as asset_name, a.asset_tag,
+                   uf.name as from_user_name, ut.name as to_user_name
+            FROM transfer_requests tr
+            JOIN assets a ON tr.asset_id = a.id
+            JOIN users uf ON tr.from_user_id = uf.id
+            JOIN users ut ON tr.to_user_id = ut.id
+            WHERE tr.status='Requested'
+        """).fetchall()
+
+def approve_transfer_request(request_id):
+    with get_db() as conn:
+        req = conn.execute("SELECT * FROM transfer_requests WHERE id=?", (request_id,)).fetchone()
+        if not req:
+            return False, "Request not found"
+
+        old_alloc = conn.execute("""
+            SELECT * FROM allocations WHERE asset_id=? AND user_id=? AND status='Active'
+        """, (req["asset_id"], req["from_user_id"])).fetchone()
+
+        if old_alloc:
+            conn.execute("""
+                UPDATE allocations SET status='Returned', actual_return_date=?, notes='Transferred'
+                WHERE id=?
+            """, (str(date.today()), old_alloc["id"]))
+
+        conn.execute("""
+            INSERT INTO allocations (asset_id, user_id, allocated_date, status)
+            VALUES (?, ?, ?, 'Active')
+        """, (req["asset_id"], req["to_user_id"], str(date.today())))
+
+        conn.execute("""
+            UPDATE transfer_requests SET status='Re-allocated', approved_date=? WHERE id=?
+        """, (str(date.today()), request_id))
+
+    return True, "Transfer approved — asset re-allocated!"
+
+def reject_transfer_request(request_id):
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE transfer_requests SET status='Rejected', approved_date=? WHERE id=?",
+            (str(date.today()), request_id)
+        )
+    return True, "Transfer request rejected."

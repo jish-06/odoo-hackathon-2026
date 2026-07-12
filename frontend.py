@@ -7,7 +7,9 @@ from utils import (
     register_asset, allocate_asset, return_asset,
     raise_maintenance, approve_maintenance, resolve_maintenance,
     create_department, create_category, promote_user,
-    ask_ai, get_user_allocations
+    ask_ai, get_user_allocations,get_active_allocation_for_asset, 
+    raise_transfer_request, get_all_transfer_requests, 
+    get_pending_transfer_requests, approve_transfer_request, reject_transfer_request
 )
 
 # ── DASHBOARD ─────────────────────────────────────
@@ -84,7 +86,8 @@ def show_assets():
 # ── ALLOCATIONS ───────────────────────────────────
 def show_allocations():
     st.title("👥 Asset Allocations")
-    tab1, tab2, tab3 = st.tabs(["📋 Active", "➕ Allocate", "↩️ Return"])
+    user = st.session_state.user
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 Active", "➕ Allocate", "↩️ Return", "🔁 Transfers"])
 
     with tab1:
         allocs = get_active_allocations()
@@ -98,31 +101,45 @@ def show_allocations():
 
     with tab2:
         assets = get_all_assets()
-        available = [a for a in assets if a["status"] == "Available"]
         users = get_all_users()
-
-        if not available:
-            st.warning("No available assets!")
+        if not assets:
+            st.warning("No assets registered!")
             return
 
-        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in available}
+        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in assets}
         user_options = {u["name"]: u["id"] for u in users}
 
-        asset = st.selectbox("Select Asset", list(asset_options.keys()))
-        user = st.selectbox("Assign To", list(user_options.keys()))
+        asset_label = st.selectbox("Select Asset", list(asset_options.keys()))
+        asset_id = asset_options[asset_label]
+        target_user = st.selectbox("Assign To", list(user_options.keys()))
         return_date = st.date_input("Expected Return Date (optional)")
 
-        if st.button("Allocate Asset", use_container_width=True):
-            success, msg = allocate_asset(
-                asset_options[asset],
-                user_options[user],
-                str(return_date) if return_date else None
-            )
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(f"❌ {msg}")
+        existing = get_active_allocation_for_asset(asset_id)
+
+        if existing:
+            st.error(f"❌ Currently held by {existing['holder_name']}")
+            notes = st.text_area("Reason for transfer (optional)", key="transfer_notes")
+            if st.button("🔁 Request Transfer", use_container_width=True):
+                success, msg = raise_transfer_request(
+                    asset_id, user_options[target_user], user["id"], notes
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+        else:
+            if st.button("Allocate Asset", use_container_width=True):
+                success, msg = allocate_asset(
+                    asset_id,
+                    user_options[target_user],
+                    str(return_date) if return_date else None
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(f"❌ {msg}")
 
     with tab3:
         allocs = get_active_allocations()
@@ -143,6 +160,41 @@ def show_allocations():
                 st.rerun()
             else:
                 st.error(msg)
+
+    with tab4:
+        st.subheader("All Transfer Requests")
+        requests = get_all_transfer_requests()
+        if requests:
+            df = pd.DataFrame([dict(r) for r in requests])
+            st.dataframe(df[["asset_tag", "asset_name", "from_user_name",
+                             "to_user_name", "status", "requested_date"]],
+                        hide_index=True)
+        else:
+            st.info("No transfer requests yet.")
+
+        if user["role"] in ["admin", "asset_manager", "dept_head"]:
+            pending = get_pending_transfer_requests()
+            if pending:
+                st.divider()
+                st.subheader("Pending Approvals")
+                req_options = {
+                    f"{r['asset_name']} - {r['from_user_name']} → {r['to_user_name']}": r["id"]
+                    for r in pending
+                }
+                selected_req = st.selectbox("Select Request", list(req_options.keys()))
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Approve", use_container_width=True):
+                        success, msg = approve_transfer_request(req_options[selected_req])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                with col2:
+                    if st.button("❌ Reject", use_container_width=True):
+                        success, msg = reject_transfer_request(req_options[selected_req])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
 
 # ── MY ASSETS (employee) ──────────────────────────
 def show_my_assets():
