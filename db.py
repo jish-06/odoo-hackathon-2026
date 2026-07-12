@@ -79,7 +79,7 @@ def init_db():
                 created_at TEXT
             )
         """)
-conn.execute("""
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS transfer_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
