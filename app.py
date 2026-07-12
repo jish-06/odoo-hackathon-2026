@@ -61,7 +61,17 @@ def show_login():
     with col2:
         st.markdown("""
             <div style='text-align:center; padding: 1.5rem 0 0.5rem 0;'>
-                <h2 style='color:#4F46E5; margin-bottom:0;'>⚡ AssetFlow</h2>
+                <div style='text-align:center; margin-bottom:1rem;'>
+                <div style='display:inline-block; background:#6366F1; 
+                padding:12px 24px; border-radius:12px;'>
+                    <span style='color:white; font-size:1.4rem; 
+                    font-weight:700; letter-spacing:2px;'>ASSET</span>
+                    <span style='color:#A5B4FC; font-size:1.4rem; 
+                    font-weight:300;'>FLOW</span>
+                </div>
+                <p style='color:#64748B; margin-top:0.5rem;'>
+                Enterprise Asset Management</p>
+            </div>
                 <p style='color:#64748B;'>Enterprise Asset & Resource Management</p>
             </div>
         """, unsafe_allow_html=True)
