@@ -2,8 +2,12 @@ import streamlit as st
 import pandas as pd
 from utils import (
     get_dashboard_stats, get_all_assets, get_all_categories,
-    get_all_users, get_active_allocations, get_overdue_allocations,
-    register_asset, allocate_asset, return_asset, get_user_allocations
+    get_all_departments, get_all_users, get_active_allocations,
+    get_overdue_allocations, get_all_maintenance, get_notifications,
+    register_asset, allocate_asset, return_asset,
+    raise_maintenance, approve_maintenance, resolve_maintenance,
+    create_department, create_category, promote_user,
+    ask_ai, get_user_allocations
 )
  
 # ── DASHBOARD ─────────────────────────────────────
@@ -151,4 +155,125 @@ def show_my_assets():
                          "expected_return_date"]], hide_index=True)
     else:
         st.info("No assets assigned to you currently.")
+def show_maintenance():
+    st.title("🔧 Maintenance")
+    user = st.session_state.user
+    role = user["role"]
+    tab1, tab2 = st.tabs(["📋 All Requests", "➕ Raise Request"])
+
+    with tab1:
+        requests = get_all_maintenance()
+        if requests:
+            df = pd.DataFrame([dict(r) for r in requests])
+            st.dataframe(df[["asset_tag", "asset_name", "user_name",
+                             "description", "priority", "status"]],
+                        hide_index=True)
+            if role in ["admin", "asset_manager"]:
+                st.divider()
+                st.subheader("Actions")
+                pending = [r for r in requests if r["status"] == "Pending"]
+                approved = [r for r in requests if r["status"] == "Approved"]
+                if pending:
+                    req_options = {
+                        f"{r['asset_name']} - {r['description'][:30]}": r["id"]
+                        for r in pending
+                    }
+                    selected = st.selectbox("Approve Request", list(req_options.keys()))
+                    if st.button("✅ Approve", use_container_width=True):
+                        success, msg = approve_maintenance(req_options[selected])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                if approved:
+                    req_options2 = {
+                        f"{r['asset_name']} - {r['description'][:30]}": r["id"]
+                        for r in approved
+                    }
+                    selected2 = st.selectbox("Resolve Request", list(req_options2.keys()))
+                    if st.button("✅ Mark Resolved", use_container_width=True):
+                        success, msg = resolve_maintenance(req_options2[selected2])
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+        else:
+            st.info("No maintenance requests yet.")
+
+    with tab2:
+        assets = get_all_assets()
+        if not assets:
+            st.warning("No assets registered yet!")
+            return
+        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in assets}
+        asset = st.selectbox("Select Asset", list(asset_options.keys()))
+        description = st.text_area("Describe the issue")
+        priority = st.selectbox("Priority", ["Low", "Medium", "High", "Critical"])
+        if st.button("Raise Request", use_container_width=True):
+            if not description:
+                st.error("Please describe the issue!")
+            else:
+                success, msg = raise_maintenance(
+                    asset_options[asset],
+                    user["id"],
+                    description,
+                    priority
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+
+def show_organization():
+    st.title("🏢 Organization Setup")
+    tab1, tab2 = st.tabs(["🏬 Departments", "📁 Categories"])
+
+    with tab1:
+        depts = get_all_departments()
+        if depts:
+            df = pd.DataFrame([dict(d) for d in depts])
+            st.dataframe(df[["id", "name", "status"]], hide_index=True)
+        st.divider()
+        name = st.text_input("Department Name")
+        if st.button("Create Department", use_container_width=True):
+            if name:
+                create_department(name)
+                st.success(f"Department '{name}' created!")
+                st.rerun()
+
+    with tab2:
+        cats = get_all_categories()
+        if cats:
+            df = pd.DataFrame([dict(c) for c in cats])
+            st.dataframe(df[["id", "name"]], hide_index=True)
+        st.divider()
+        cat_name = st.text_input("Category Name")
+        if st.button("Create Category", use_container_width=True):
+            if cat_name:
+                create_category(cat_name)
+                st.success(f"Category '{cat_name}' created!")
+                st.rerun()
+
+def show_users():
+    st.title("👤 User Management")
+    users = get_all_users()
+    if users:
+        df = pd.DataFrame([dict(u) for u in users])
+        st.dataframe(df[["id", "name", "email", "role", "status"]], hide_index=True)
+    st.divider()
+    st.subheader("Promote User")
+    user_options = {u["name"]: u["id"] for u in users}
+    selected = st.selectbox("Select User", list(user_options.keys()))
+    role = st.selectbox("New Role", ["employee", "dept_head", "asset_manager", "admin"])
+    if st.button("Promote", use_container_width=True):
+        promote_user(user_options[selected], role)
+        st.success("User role updated!")
+        st.rerun()
+
+def show_notifications():
+    st.title("🔔 Notifications")
+    user = st.session_state.user
+    notifs = get_notifications(user["id"])
+    if notifs:
+        for n in notifs:
+            st.info(f"📢 {n['message']} — {n['created_at']}")
+    else:
+        st.info("No notifications yet.")
  
