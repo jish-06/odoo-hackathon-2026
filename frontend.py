@@ -1,12 +1,18 @@
 import streamlit as st
 import pandas as pd
+from datetime import date
+from db import get_db
 from utils import (
     get_dashboard_stats, get_all_assets, get_all_categories,
-    get_all_users, get_active_allocations, get_overdue_allocations,
-    register_asset, allocate_asset, return_asset, get_user_allocations
+    get_all_departments, get_all_users, get_active_allocations,
+    get_overdue_allocations, get_all_maintenance, get_notifications,
+    register_asset, allocate_asset, return_asset,
+    raise_maintenance, approve_maintenance, resolve_maintenance,
+    create_department, create_category, promote_user,
+    ask_ai, get_user_allocations
 )
  
-# ── DASHBOARD ─────────────────────────────────────
+ 
 def show_dashboard():
     st.title("🏠 Dashboard")
     stats = get_dashboard_stats()
@@ -37,7 +43,7 @@ def show_dashboard():
                          "allocated_date", "expected_return_date"]],
                     hide_index=True)
  
-# ── ASSETS ────────────────────────────────────────
+ 
 def show_assets():
     st.title("📦 Asset Registry")
     tab1, tab2 = st.tabs(["📋 All Assets", "➕ Register Asset"])
@@ -77,70 +83,135 @@ def show_assets():
                 st.success(f"Asset registered! Tag: {tag}")
                 st.rerun()
  
-# ── ALLOCATIONS ───────────────────────────────────
+ 
+# ---------------------------------------------------------------------------
+# SCREEN 5 — Asset Allocation & Transfer
+# ---------------------------------------------------------------------------
+ 
 def show_allocations():
-    st.title("👥 Asset Allocations")
-    tab1, tab2, tab3 = st.tabs(["📋 Active", "➕ Allocate", "↩️ Return"])
+    st.title("👥 Asset Allocation & Transfer")
  
-    with tab1:
-        allocs = get_active_allocations()
-        if allocs:
-            df = pd.DataFrame([dict(a) for a in allocs])
-            st.dataframe(df[["asset_tag", "asset_name", "user_name",
-                             "allocated_date", "expected_return_date"]],
-                        hide_index=True)
-        else:
-            st.info("No active allocations.")
+    assets = get_all_assets()
+    if not assets:
+        st.info("No assets registered yet.")
+        return
  
-    with tab2:
-        assets = get_all_assets()
-        available = [a for a in assets if a["status"] == "Available"]
+    asset_options = {f"{a['asset_tag']} - {a['name']}": a for a in assets}
+    selected_label = st.selectbox("Asset", list(asset_options.keys()))
+    asset = asset_options[selected_label]
+ 
+    active_allocs = get_active_allocations()
+    current_alloc = next((al for al in active_allocs if al["asset_id"] == asset["id"]), None)
+ 
+    if current_alloc:
+        st.markdown(f"""
+            <div style='background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;
+                        padding:0.85rem 1.1rem;margin:0.75rem 0;'>
+                <b>Already allocated to {current_alloc['user_name']}</b><br>
+                <span style='color:#B91C1C;'>Direct re-allocation is blocked — submit a transfer request below.</span>
+            </div>
+        """, unsafe_allow_html=True)
+ 
+        st.subheader("Transfer Request")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.text_input("From", value=current_alloc["user_name"], disabled=True)
+        with col2:
+            users = get_all_users()
+            other_users = {u["name"]: u for u in users if u["id"] != current_alloc["user_id"]}
+            to_name = st.selectbox("To", ["Select Employee..."] + list(other_users.keys()))
+ 
+        reason = st.text_area("Reason", height=120, placeholder="Why does this asset need to move?")
+ 
+        if st.button("Submit Request", type="primary"):
+            if to_name == "Select Employee...":
+                st.error("Please select who the asset should transfer to.")
+            elif not reason.strip():
+                st.error("Please provide a reason for the transfer.")
+            else:
+                _submit_transfer_request(asset["id"], current_alloc["user_id"],
+                                          other_users[to_name]["id"], reason)
+                st.success("Transfer request submitted — pending approval.")
+                st.rerun()
+ 
+        _show_pending_transfers(asset["id"])
+ 
+        with st.expander("↩️ Return this asset instead"):
+            notes = st.text_area("Condition notes", key="return_notes")
+            if st.button("Return Asset", key="return_btn"):
+                success, msg = return_asset(current_alloc["id"], notes)
+                (st.success if success else st.error)(msg)
+                if success:
+                    st.rerun()
+ 
+    else:
+        st.success("This asset is currently available.")
         users = get_all_users()
+        if users:
+            user_map = {u["name"]: u for u in users}
+            to_name = st.selectbox("Allocate to", list(user_map.keys()))
+            expected_return = st.date_input("Expected return date (optional)", value=None)
  
-        if not available:
-            st.warning("No available assets!")
-            return
+            if st.button("Allocate Asset", type="primary"):
+                ok, msg = allocate_asset(
+                    asset["id"],
+                    user_map[to_name]["id"],
+                    str(expected_return) if expected_return else None,
+                )
+                (st.success if ok else st.error)(msg)
+                if ok:
+                    st.rerun()
  
-        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in available}
-        user_options = {u["name"]: u["id"] for u in users}
+    st.divider()
+    st.subheader("Allocation History")
+    with get_db() as conn:
+        history = conn.execute("""
+            SELECT al.*, u.name as user_name
+            FROM allocations al
+            JOIN users u ON al.user_id = u.id
+            WHERE al.asset_id = ?
+            ORDER BY al.id DESC
+        """, (asset["id"],)).fetchall()
  
-        asset = st.selectbox("Select Asset", list(asset_options.keys()))
-        user = st.selectbox("Assign To", list(user_options.keys()))
-        return_date = st.date_input("Expected Return Date (optional)")
+    if not history:
+        st.caption("No history for this asset yet.")
+    for h in history:
+        if h["status"] == "Returned":
+            line = f"**{h['actual_return_date']}** — Returned by {h['user_name']}"
+            if h["notes"]:
+                line += f", condition: {h['notes']}"
+        else:
+            line = f"**{h['allocated_date']}** — Allocated to {h['user_name']}"
+        st.markdown(f"- {line}")
  
-        if st.button("Allocate Asset", use_container_width=True):
-            success, msg = allocate_asset(
-                asset_options[asset],
-                user_options[user],
-                str(return_date) if return_date else None
-            )
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(f"❌ {msg}")
  
-    with tab3:
-        allocs = get_active_allocations()
-        if not allocs:
-            st.info("No active allocations to return.")
-            return
-        alloc_options = {
-            f"{a['asset_tag']} - {a['asset_name']} ({a['user_name']})": a["id"]
-            for a in allocs
-        }
-        selected = st.selectbox("Select Allocation", list(alloc_options.keys()))
-        notes = st.text_area("Condition Notes")
+# --- Transfer request storage -----------------------------------------------
+# TODO(backend): replace this session_state shim with a real `transfer_requests`
+# table + submit_transfer_request()/approve_transfer_request() functions in
+# utils.py, e.g.:
+#   CREATE TABLE transfer_requests (
+#     id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER, from_user_id INTEGER,
+#     to_user_id INTEGER, reason TEXT, status TEXT DEFAULT 'Pending', created_at TEXT
+#   )
  
-        if st.button("Return Asset", use_container_width=True):
-            success, msg = return_asset(alloc_options[selected], notes)
-            if success:
-                st.success(msg)
-                st.rerun()
-            else:
-                st.error(msg)
+def _submit_transfer_request(asset_id, from_user_id, to_user_id, reason):
+    if "transfer_requests" not in st.session_state:
+        st.session_state.transfer_requests = []
+    st.session_state.transfer_requests.append({
+        "asset_id": asset_id, "from_user_id": from_user_id,
+        "to_user_id": to_user_id, "reason": reason,
+        "created_at": str(date.today()),
+    })
  
-# ── MY ASSETS (employee) ──────────────────────────
+ 
+def _show_pending_transfers(asset_id):
+    reqs = [r for r in st.session_state.get("transfer_requests", []) if r["asset_id"] == asset_id]
+    if reqs:
+        st.caption("Pending transfer requests for this asset")
+        for r in reqs:
+            st.markdown(f"- {r['created_at']}: {r['reason']}")
+ 
+ 
 def show_my_assets():
     st.title("👤 My Assets")
     user = st.session_state.user
@@ -152,3 +223,250 @@ def show_my_assets():
     else:
         st.info("No assets assigned to you currently.")
  
+ 
+# ---------------------------------------------------------------------------
+# SCREEN 6 — Resource Booking
+# ---------------------------------------------------------------------------
+ 
+SLOT_HOURS = ["4:00", "5:00", "6:00", "7:00", "8:00", "9:00", "10:00", "11:00", "12:00", "1:00"]
+ 
+def show_resource_booking():
+    st.title("🗓️ Resource Booking")
+ 
+    assets = get_all_assets()
+    bookable = [a for a in assets if a["is_bookable"]]
+    if not bookable:
+        st.info("No bookable resources yet. Mark an asset as bookable when registering it.")
+        return
+ 
+    col1, col2 = st.columns(2)
+    with col1:
+        resource_options = {f"{a['name']} ({a['location']})": a for a in bookable}
+        resource_label = st.selectbox("Resource", list(resource_options.keys()))
+        resource = resource_options[resource_label]
+    with col2:
+        booking_date = st.date_input("Date", value=date.today())
+ 
+    bookings = _get_bookings(resource["id"], booking_date)
+ 
+    st.write("")
+    for hour in SLOT_HOURS:
+        booking = next((b for b in bookings if b["start"] == hour), None)
+        cols = st.columns([1, 8])
+        with cols[0]:
+            st.markdown(f"<div style='padding-top:0.4rem;color:#64748B;'>{hour}</div>",
+                        unsafe_allow_html=True)
+        with cols[1]:
+            if booking:
+                st.markdown(f"""
+                    <div style='background:#DBEAFE;border:1px solid #93C5FD;border-radius:6px;
+                                padding:0.5rem 0.75rem;'>
+                        Booked — {booking['team']} — {booking['start']} to {booking['end']}
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown("<div style='height:2rem;'></div>", unsafe_allow_html=True)
+ 
+    st.divider()
+    st.subheader("Book a slot")
+    b1, b2, b3 = st.columns(3)
+    with b1:
+        start = st.selectbox("Start", SLOT_HOURS)
+    with b2:
+        end = st.selectbox("End", SLOT_HOURS, index=1)
+    with b3:
+        team = st.text_input("Team / purpose")
+ 
+    if st.button("Book a slot", type="primary"):
+        conflict = any(b["start"] < end and start < b["end"] for b in bookings)
+        if conflict:
+            st.error(f"Requested {start} to {end} — conflict, slot is unavailable.")
+        elif not team.strip():
+            st.error("Please enter a team or purpose for the booking.")
+        else:
+            _add_booking(resource["id"], booking_date, start, end, team)
+            st.success("Slot booked!")
+            st.rerun()
+ 
+ 
+# --- Booking storage ---------------------------------------------------------
+# TODO(backend): replace this session_state shim with a real `bookings` table +
+# create_booking()/get_bookings_for_resource() functions in utils.py, e.g.:
+#   CREATE TABLE bookings (
+#     id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id INTEGER, booking_date TEXT,
+#     start_time TEXT, end_time TEXT, team TEXT, user_id INTEGER
+#   )
+ 
+def _get_bookings(resource_id, booking_date):
+    key = f"{resource_id}:{booking_date}"
+    return st.session_state.get("bookings", {}).get(key, [])
+ 
+ 
+def _add_booking(resource_id, booking_date, start, end, team):
+    key = f"{resource_id}:{booking_date}"
+    if "bookings" not in st.session_state:
+        st.session_state.bookings = {}
+    st.session_state.bookings.setdefault(key, []).append(
+        {"start": start, "end": end, "team": team}
+    )
+ 
+ 
+# ---------------------------------------------------------------------------
+# SCREEN 7 — Maintenance Management (Kanban)
+# ---------------------------------------------------------------------------
+# Backend only tracks Pending / Approved / Resolved. "Technician assigned" and
+# "In progress" are UI-only sub-stages layered on top via session_state until
+# backend adds a `technician` column and richer status values.
+# TODO(backend): ALTER TABLE maintenance_requests ADD COLUMN technician TEXT;
+#                and support status values 'Technician Assigned', 'In Progress'.
+ 
+KANBAN_COLUMNS = ["Pending", "Approved", "Technician Assigned", "In Progress", "Resolved"]
+ 
+def show_maintenance():
+    st.title("🔧 Maintenance Management")
+    st.caption("Approving a card moves it to Under Maintenance; resolving returns it to Available.")
+ 
+    user = st.session_state.user
+    role = user["role"]
+ 
+    tab1, tab2 = st.tabs(["📋 Board", "➕ Raise Request"])
+ 
+    with tab1:
+        requests = get_all_maintenance()
+        sub_stage = st.session_state.setdefault("maintenance_substage", {})
+ 
+        cols = st.columns(len(KANBAN_COLUMNS))
+        for col, stage in zip(cols, KANBAN_COLUMNS):
+            with col:
+                st.markdown(f"**{stage}**")
+                for req in requests:
+                    local = sub_stage.get(req["id"], {})
+ 
+                    if req["status"] == "Resolved":
+                        effective_stage = "Resolved"
+                    elif req["status"] == "Pending":
+                        effective_stage = "Pending"
+                    else:  # Approved
+                        effective_stage = local.get("stage", "Approved")
+ 
+                    if effective_stage != stage:
+                        continue
+ 
+                    _render_maintenance_card(req, local, role)
+ 
+    with tab2:
+        assets = get_all_assets()
+        if not assets:
+            st.warning("No assets registered yet!")
+            return
+        asset_options = {f"{a['asset_tag']} - {a['name']}": a["id"] for a in assets}
+        asset = st.selectbox("Select Asset", list(asset_options.keys()))
+        description = st.text_area("Describe the issue")
+        priority = st.selectbox("Priority", ["Low", "Medium", "High", "Critical"])
+        if st.button("Raise Request", use_container_width=True):
+            if not description:
+                st.error("Please describe the issue!")
+            else:
+                success, msg = raise_maintenance(
+                    asset_options[asset], user["id"], description, priority
+                )
+                if success:
+                    st.success(msg)
+                    st.rerun()
+ 
+ 
+def _render_maintenance_card(req, local, role):
+    color = {"Low": "#D1FAE5", "Medium": "#FEF3C7", "High": "#FEE2E2",
+             "Critical": "#FCA5A5"}.get(req["priority"], "#F1F5F9")
+    st.markdown(f"""
+        <div style='background:{color};border-radius:8px;padding:0.6rem 0.7rem;margin-bottom:0.5rem;'>
+            <b>{req['asset_tag']}</b><br>
+            <span style='font-size:0.85rem;'>{req['description']}</span>
+            {f"<br><span style='font-size:0.8rem;color:#475569;'>tech: {local['technician']}</span>" if local.get('technician') else ""}
+        </div>
+    """, unsafe_allow_html=True)
+ 
+    can_manage = role in ["admin", "asset_manager"]
+    if not can_manage:
+        return
+ 
+    if req["status"] == "Pending":
+        if st.button("Approve", key=f"approve_{req['id']}"):
+            approve_maintenance(req["id"])
+            st.rerun()
+ 
+    elif req["status"] == "Approved" and not local.get("stage"):
+        tech = st.text_input("Assign technician", key=f"tech_{req['id']}")
+        if st.button("Assign", key=f"assign_{req['id']}") and tech.strip():
+            st.session_state.maintenance_substage[req["id"]] = {"stage": "Technician Assigned", "technician": tech}
+            st.rerun()
+ 
+    elif local.get("stage") == "Technician Assigned":
+        if st.button("Start work", key=f"start_{req['id']}"):
+            local["stage"] = "In Progress"
+            st.rerun()
+ 
+    elif local.get("stage") == "In Progress":
+        if st.button("Mark resolved", key=f"resolve_{req['id']}"):
+            resolve_maintenance(req["id"])
+            st.session_state.maintenance_substage.pop(req["id"], None)
+            st.rerun()
+ 
+ 
+def show_organization():
+    st.title("🏢 Organization Setup")
+    tab1, tab2 = st.tabs(["🏬 Departments", "📁 Categories"])
+ 
+    with tab1:
+        depts = get_all_departments()
+        if depts:
+            df = pd.DataFrame([dict(d) for d in depts])
+            st.dataframe(df[["id", "name", "status"]], hide_index=True)
+        st.divider()
+        name = st.text_input("Department Name")
+        if st.button("Create Department", use_container_width=True):
+            if name:
+                create_department(name)
+                st.success(f"Department '{name}' created!")
+                st.rerun()
+ 
+    with tab2:
+        cats = get_all_categories()
+        if cats:
+            df = pd.DataFrame([dict(c) for c in cats])
+            st.dataframe(df[["id", "name"]], hide_index=True)
+        st.divider()
+        cat_name = st.text_input("Category Name")
+        if st.button("Create Category", use_container_width=True):
+            if cat_name:
+                create_category(cat_name)
+                st.success(f"Category '{cat_name}' created!")
+                st.rerun()
+ 
+ 
+def show_users():
+    st.title("👤 User Management")
+    users = get_all_users()
+    if users:
+        df = pd.DataFrame([dict(u) for u in users])
+        st.dataframe(df[["id", "name", "email", "role", "status"]], hide_index=True)
+    st.divider()
+    st.subheader("Promote User")
+    user_options = {u["name"]: u["id"] for u in users}
+    selected = st.selectbox("Select User", list(user_options.keys()))
+    role = st.selectbox("New Role", ["employee", "dept_head", "asset_manager", "admin"])
+    if st.button("Promote", use_container_width=True):
+        promote_user(user_options[selected], role)
+        st.success("User role updated!")
+        st.rerun()
+ 
+ 
+def show_notifications():
+    st.title("🔔 Notifications")
+    user = st.session_state.user
+    notifs = get_notifications(user["id"])
+    if notifs:
+        for n in notifs:
+            st.info(f"📢 {n['message']} — {n['created_at']}")
+    else:
+        st.info("No notifications yet.")
