@@ -88,6 +88,7 @@ def show_login():
             if not email or not password:
                 st.error("Please fill in both fields!")
             else:
+                st.write(f"DEBUG — email: '{email}' | password: '{password}'")
                 user = login(email, password)
  
                 if user:
