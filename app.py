@@ -5,6 +5,13 @@ from frontend import (
     show_maintenance, show_organization, show_users, show_notifications,
     show_resource_booking
 )
+from audit import(
+    show_audit
+)
+
+from reports import(
+    show_reports
+)
  
 st.set_page_config(page_title="AssetFlow", page_icon="⚡", layout="wide")
  
@@ -131,6 +138,8 @@ def show_sidebar():
                 "🔧 Maintenance",
                 "🏢 Organization",
                 "👤 Users",
+                "Audit",
+                "Reports",
                 "🔔 Notifications",
                 "🗓️ Resource Booking"
             ]
@@ -140,6 +149,8 @@ def show_sidebar():
                 "📦 Assets",
                 "👥 Allocations",
                 "🔧 Maintenance",
+                "Audit,"
+                "Reports,"
                 "🔔 Notifications"
             ]
         elif role == "dept_head":
@@ -182,6 +193,16 @@ def show_app():
  
     elif page == "👤 Users":
         show_users()
+
+    elif page =="audit":
+        show_audit()
+
+
+    elif page =="reports":
+        show_reports()
+
+
+
  
     elif page == "🔔 Notifications":
         show_notifications()
